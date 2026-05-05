@@ -282,6 +282,11 @@ function TicketDetailDialog({
   if (!ticket) return null;
 
   const handleSave = async () => {
+    // Resolution notes required when marking a ticket as resolved or closed
+    if ((status === "resolved" || status === "closed") && !notes.trim()) {
+      toast.error("Resolution notes are required to resolve or close a ticket");
+      return;
+    }
     setSaving(true);
     const assigneeRow = staff.find((s) => s.user_id === assignee);
     const update: any = {
@@ -373,14 +378,17 @@ function TicketDetailDialog({
           </div>
 
           <div>
-            <Label htmlFor="notes" className="text-xs">Resolution notes</Label>
+            <Label htmlFor="notes" className="text-xs">
+              Resolution notes <span className="text-destructive">*</span>
+            </Label>
             <Textarea
               id="notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={4}
-              placeholder={canManage ? "Document the resolution for compliance…" : "No notes yet"}
+              placeholder={canManage ? "Required when resolving or closing — document the resolution for compliance…" : "No notes yet"}
               disabled={!canManage}
+              required
             />
           </div>
 
