@@ -475,7 +475,13 @@ export type Database = {
         | "process_analyst"
         | "senior_manager"
       ticket_priority: "low" | "medium" | "high" | "urgent"
-      ticket_status: "open" | "assigned" | "in_progress" | "resolved" | "closed"
+      ticket_status:
+        | "open"
+        | "assigned"
+        | "in_progress"
+        | "resolved"
+        | "closed"
+        | "reopened"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -612,7 +618,14 @@ export const Constants = {
         "senior_manager",
       ],
       ticket_priority: ["low", "medium", "high", "urgent"],
-      ticket_status: ["open", "assigned", "in_progress", "resolved", "closed"],
+      ticket_status: [
+        "open",
+        "assigned",
+        "in_progress",
+        "resolved",
+        "closed",
+        "reopened",
+      ],
     },
   },
 } as const
