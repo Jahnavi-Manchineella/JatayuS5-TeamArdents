@@ -21,10 +21,10 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Ticket, RefreshCw, Clock, User as UserIcon, Tag, AlertCircle } from "lucide-react";
+import { Ticket, RefreshCw, Clock, User as UserIcon, Tag, AlertCircle, RotateCcw } from "lucide-react";
 import { TicketQAPanel } from "@/components/tickets/TicketQAPanel";
 
-type TicketStatus = "open" | "assigned" | "in_progress" | "resolved" | "closed";
+type TicketStatus = "open" | "assigned" | "in_progress" | "resolved" | "closed" | "reopened";
 
 interface TicketRow {
   id: string;
@@ -51,6 +51,7 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "in_progress", label: "In Progress" },
   { value: "resolved", label: "Resolved" },
   { value: "closed", label: "Closed" },
+  { value: "reopened", label: "Reopened" },
 ];
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
@@ -59,6 +60,7 @@ const STATUS_COLORS: Record<TicketStatus, string> = {
   in_progress: "bg-purple-500/15 text-purple-400 border-purple-500/30",
   resolved: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   closed: "bg-muted text-muted-foreground border-border",
+  reopened: "bg-rose-500/15 text-rose-400 border-rose-500/30",
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -360,6 +362,7 @@ function TicketDetailDialog({
                   <SelectItem value="in_progress">In Progress</SelectItem>
                   <SelectItem value="resolved">Resolved</SelectItem>
                   <SelectItem value="closed">Closed</SelectItem>
+                  <SelectItem value="reopened">Reopened</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -392,10 +395,38 @@ function TicketDetailDialog({
             />
           </div>
 
-          {!canManage && ticket.status === "resolved" && (
-            <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3 flex gap-2 text-sm">
-              <AlertCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-              <span className="text-emerald-300">This ticket has been resolved.</span>
+          {!canManage && (ticket.status === "resolved" || ticket.status === "closed") && currentUserId === ticket.user_id && (
+            <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3 flex items-start justify-between gap-3 text-sm">
+              <div className="flex gap-2">
+                <AlertCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                <span className="text-emerald-300">
+                  This ticket is {ticket.status}. Not satisfied with the resolution? You can reopen it.
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-rose-500/40 text-rose-300 hover:bg-rose-500/10 flex-shrink-0"
+                onClick={async () => {
+                  const { error } = await supabase
+                    .from("tickets")
+                    .update({ status: "reopened" as any, resolved_at: null, closed_at: null })
+                    .eq("id", ticket.id);
+                  if (error) {
+                    toast.error(error.message);
+                    return;
+                  }
+                  supabase.functions
+                    .invoke("notify-ticket", { body: { event: "updated", ticket_id: ticket.id } })
+                    .catch(() => {});
+                  toast.success("Ticket reopened — our team will take another look.");
+                  onUpdated();
+                  onClose();
+                }}
+              >
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                Reopen Ticket
+              </Button>
             </div>
           )}
 
