@@ -79,9 +79,11 @@ export function RaiseTicketDialog({
         .filter(Boolean)
         .join("\n\n---\n\n");
 
-      const { data: ticket, error } = await supabase
+      const ticketId = crypto.randomUUID();
+      const { error } = await supabase
         .from("tickets")
         .insert({
+          id: ticketId,
           user_id: user?.id ?? null,
           user_email: user?.email ?? guestEmail.trim(),
           guest_name: !user ? (guestName.trim() || null) : null,
@@ -90,16 +92,14 @@ export function RaiseTicketDialog({
           category: selectedCategory,
           priority,
           conversation_id: conversationId || null,
-        } as any)
-        .select("id")
-        .single();
+        } as any);
 
       if (error) throw error;
 
       // Fire-and-forget notification (non-blocking)
       supabase.functions
         .invoke("notify-ticket", {
-          body: { event: "created", ticket_id: ticket.id },
+          body: { event: "created", ticket_id: ticketId },
         })
         .catch(() => {});
 
