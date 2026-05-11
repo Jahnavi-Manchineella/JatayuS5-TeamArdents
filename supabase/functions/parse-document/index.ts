@@ -1,11 +1,115 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+// Page-batched PDF extraction config
+const PDF_PAGES_PER_BATCH = 15;
+const PDF_BATCH_CONCURRENCY = 4;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+async function extractPdfBatch(
+  apiKey: string,
+  base64: string,
+  batchLabel: string,
+): Promise<string> {
+  const systemPrompt =
+    "You are a document text extraction tool. Extract ALL text content from the provided PDF pages exactly as it appears. Preserve paragraph structure using double newlines between paragraphs. Preserve section headings. Do NOT summarize, interpret, or add commentary. Output ONLY the extracted text.";
+  const userPrompt = `Extract all text from these PDF pages (${batchLabel}). Preserve structure with section headings and paragraphs.`;
+
+  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64}` } },
+            { type: "text", text: userPrompt },
+          ],
+        },
+      ],
+      max_tokens: 16000,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`PDF batch ${batchLabel} extraction failed: ${res.status} ${t}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
+async function extractLargePdf(
+  apiKey: string,
+  arrayBuffer: ArrayBuffer,
+): Promise<string> {
+  const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const totalPages = srcDoc.getPageCount();
+  console.log(`PDF has ${totalPages} pages, splitting into batches of ${PDF_PAGES_PER_BATCH}`);
+
+  // Build batch page-index ranges
+  const batches: { start: number; end: number }[] = [];
+  for (let i = 0; i < totalPages; i += PDF_PAGES_PER_BATCH) {
+    batches.push({ start: i, end: Math.min(i + PDF_PAGES_PER_BATCH, totalPages) });
+  }
+
+  // Pre-build sub-PDFs as base64 (sequential — cheap, avoids memory spikes)
+  const subPdfs: { label: string; base64: string }[] = [];
+  for (const b of batches) {
+    const sub = await PDFDocument.create();
+    const indices = Array.from({ length: b.end - b.start }, (_, k) => b.start + k);
+    const copied = await sub.copyPages(srcDoc, indices);
+    for (const p of copied) sub.addPage(p);
+    const bytes = await sub.save();
+    subPdfs.push({
+      label: `pages ${b.start + 1}-${b.end} of ${totalPages}`,
+      base64: bytesToBase64(bytes),
+    });
+  }
+
+  // Extract batches with bounded concurrency
+  const results: string[] = new Array(subPdfs.length).fill("");
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= subPdfs.length) return;
+      const { label, base64 } = subPdfs[idx];
+      console.log(`Extracting batch ${idx + 1}/${subPdfs.length} (${label})`);
+      try {
+        results[idx] = await extractPdfBatch(apiKey, base64, label);
+      } catch (e) {
+        console.error(`Batch ${label} failed:`, e);
+        results[idx] = `\n[Extraction failed for ${label}]\n`;
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(PDF_BATCH_CONCURRENCY, subPdfs.length) }, () => worker()),
+  );
+
+  return results.join("\n\n");
+}
 
 // Generate embeddings via HuggingFace Inference API (sentence-transformers/all-MiniLM-L6-v2, 384-dim)
 async function embedTexts(texts: string[]): Promise<(number[] | null)[]> {
@@ -103,8 +207,15 @@ serve(async (req) => {
       // EML: parse email text format
       const emlText = await file.text();
       extractedText = parseEml(emlText);
+    } else if (fileExt === "pdf") {
+      // PDF: page-batched extraction so we can handle 250-300 page docs
+      const arrayBuffer = await file.arrayBuffer();
+      extractedText = await extractLargePdf(LOVABLE_API_KEY, arrayBuffer);
+      if (!extractedText.trim()) {
+        throw new Error("No content could be extracted from the PDF");
+      }
     } else {
-      // For PDF, DOCX, images, MSG, XLSX/XLS — use AI multimodal extraction
+      // For DOCX, images, MSG, XLSX/XLS — single-shot AI multimodal extraction
       const arrayBuffer = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
       let binary = "";
@@ -114,7 +225,6 @@ serve(async (req) => {
       const base64 = btoa(binary);
 
       const mimeMap: Record<string, string> = {
-        pdf: "application/pdf",
         docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         jpg: "image/jpeg",
         jpeg: "image/jpeg",
