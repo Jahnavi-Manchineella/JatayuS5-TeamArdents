@@ -21,10 +21,10 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Ticket, RefreshCw, Clock, User as UserIcon, Tag, AlertCircle } from "lucide-react";
+import { Ticket, RefreshCw, Clock, User as UserIcon, Tag, AlertCircle, RotateCcw } from "lucide-react";
 import { TicketQAPanel } from "@/components/tickets/TicketQAPanel";
 
-type TicketStatus = "open" | "assigned" | "in_progress" | "resolved" | "closed";
+type TicketStatus = "open" | "assigned" | "in_progress" | "resolved" | "closed" | "reopened";
 
 interface TicketRow {
   id: string;
@@ -51,6 +51,7 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "in_progress", label: "In Progress" },
   { value: "resolved", label: "Resolved" },
   { value: "closed", label: "Closed" },
+  { value: "reopened", label: "Reopened" },
 ];
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
@@ -59,6 +60,7 @@ const STATUS_COLORS: Record<TicketStatus, string> = {
   in_progress: "bg-purple-500/15 text-purple-400 border-purple-500/30",
   resolved: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   closed: "bg-muted text-muted-foreground border-border",
+  reopened: "bg-rose-500/15 text-rose-400 border-rose-500/30",
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
