@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   ticketCreatedEmail,
+  ticketCreatedRequesterEmail,
   ticketAssignedEmail,
   ticketResolvedEmail,
   ticketUpdatedEmail,
@@ -85,6 +86,18 @@ serve(async (req) => {
       }
       template = ticketCreatedEmail(ticket);
       purpose = "ticket_created";
+
+      // Also send a confirmation (no CTA link) to the requester
+      if (ticket.user_email) {
+        const requesterTpl = ticketCreatedRequesterEmail(ticket);
+        await sendViaGmail(
+          ticket.user_email,
+          requesterTpl.subject,
+          requesterTpl.html,
+          ticket.id,
+          "ticket_created_requester"
+        );
+      }
     } else if (body.event === "assigned" && ticket.assigned_to) {
       const { data } = await supabase.auth.admin.getUserById(ticket.assigned_to);
       if (data?.user?.email) recipients.add(data.user.email);
