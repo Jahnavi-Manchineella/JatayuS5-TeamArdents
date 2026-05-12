@@ -53,6 +53,19 @@ export function ticketCreatedEmail(ticket: any) {
   };
 }
 
+export function ticketCreatedRequesterEmail(ticket: any) {
+  return {
+    subject: `[SOPAssist] Your ticket #${ticket.id.slice(0, 8).toUpperCase()} has been received`,
+    html: shell(
+      "We've Received Your Support Ticket",
+      "Thank you for reaching out. Our SME team has been notified and will follow up with you shortly. Below are the details of the ticket you raised.",
+      ticketCard(ticket),
+      "",
+      ""
+    ),
+  };
+}
+
 export function ticketAssignedEmail(ticket: any) {
   return {
     subject: `[SOPAssist] Ticket #${ticket.id.slice(0, 8).toUpperCase()} assigned to you`,
