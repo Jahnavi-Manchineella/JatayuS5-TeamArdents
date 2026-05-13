@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { streamChat, ChatMessage, Citation } from "@/lib/chat-stream";
+import { streamChat, ChatMessage, Citation, ChunkDetail } from "@/lib/chat-stream";
 import { ChatBubble } from "@/components/chat/ChatBubble";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { RaiseTicketDialog } from "@/components/chat/RaiseTicketDialog";
@@ -22,6 +22,8 @@ interface UIMessage {
   content: string;
   citations?: Citation[];
   category?: string;
+  chunks?: ChunkDetail[];
+  auditId?: string;
 }
 
 export default function Chat() {
@@ -133,6 +135,8 @@ export default function Chat() {
       let assistantContent = "";
       let msgCitations: Citation[] = [];
       let msgCategory = "General Operations";
+      let msgChunks: ChunkDetail[] = [];
+      let msgAuditId: string | undefined;
 
       const chatHistory: ChatMessage[] = [
         ...messages.map((m) => ({ role: m.role, content: m.content })),
@@ -165,6 +169,30 @@ export default function Chat() {
           setCitations(cits);
           if (cits.length > 0) setShowCitations(true);
         },
+        onChunks: (chunks) => {
+          msgChunks = chunks;
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === "assistant") {
+              return prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, chunks } : m,
+              );
+            }
+            return prev;
+          });
+        },
+        onAuditId: (id) => {
+          msgAuditId = id;
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === "assistant") {
+              return prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, auditId: id } : m,
+              );
+            }
+            return prev;
+          });
+        },
         onDone: async () => {
           setIsStreaming(false);
           if (isAuthenticated && assistantContent && convId) {
@@ -174,6 +202,9 @@ export default function Chat() {
               citations: msgCitations,
               category: msgCategory,
             });
+            // suppress unused-warning for chunks/auditId vars we keep client-side only
+            void msgChunks;
+            void msgAuditId;
             await supabase
               .from("conversations")
               .update({ updated_at: new Date().toISOString() })
@@ -324,6 +355,8 @@ export default function Chat() {
                   isStreaming={streaming}
                   showRaiseTicket={showRaise}
                   isFallback={isFallback}
+                  chunks={msg.chunks}
+                  auditId={msg.auditId}
                   onRaiseTicket={() => {
                     setTicketContext({
                       query: prevUserMsg?.content || "",
