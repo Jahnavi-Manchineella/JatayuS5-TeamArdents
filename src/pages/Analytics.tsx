@@ -4,8 +4,6 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pi
 import { Activity, MessageSquare, FileText, Users, Search, ThumbsUp, ThumbsDown, Clock, DollarSign, ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "sonner";
-
 interface AuditLog {
   id: string;
   query: string;
