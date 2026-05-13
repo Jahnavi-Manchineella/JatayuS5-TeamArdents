@@ -218,9 +218,13 @@ serve(async (req) => {
         const orFilter = keywords.map((k: string) => `content.ilike.%${k}%`).join(",");
         let query = supabase
           .from("document_chunks")
-          .select("content, section_title, document_id, documents(name, category)")
+          .select("content, section_title, document_id, documents!inner(name, category)")
           .or(orFilter)
           .limit(5);
+        if (categoryFilter) {
+          // Restrict ilike fallback to the selected category as well
+          query = query.eq("documents.category", categoryFilter);
+        }
 
         const { data: fallbackChunks } = await query;
         relevantChunks = (fallbackChunks || []).map((c: any) => ({
@@ -262,14 +266,20 @@ serve(async (req) => {
       else if (/product|account|loan|card|deposit|mortgage|savings/.test(lowerQuery)) category = "Products";
     }
 
-    const systemPrompt = `You are a Banking AI Knowledge Assistant for internal banking operations teams. You help answer questions about banking procedures, compliance, products, and operations based on internal documents.
+    const filterScope = categoryFilter ? `the "${categoryFilter}" knowledge base` : "the knowledge base";
+    const noDocsMessage = categoryFilter
+      ? `No relevant documents were found in the "${categoryFilter}" knowledge base for this query. You MUST reply that no information is available in the "${categoryFilter}" knowledge base and suggest the user either change the filter to "All" or raise a ticket. Do NOT answer from general knowledge while a category filter is active.`
+      : `No relevant documents found in the knowledge base. Clearly state that no internal documents were found matching the query, and only then provide a brief best-effort answer from general banking knowledge with a clear disclaimer.`;
 
-${contextStr ? `Use the following document excerpts to ground your answer. Always cite your sources using [Source N] notation when referencing information from the documents.${contextStr}` : "No relevant documents found in the knowledge base. Answer based on your general banking knowledge but clearly state that no internal documents were found matching the query."}
-${stellarContext ? `\nLive Stellar network data (from Horizon public API):\n${stellarContext}\nWhen using this data, label it as "Stellar Horizon (live)" so the user knows it is live network data, not from internal documents.\n` : ""}
+    const systemPrompt = `You are a Banking AI Knowledge Assistant for internal banking operations teams. You answer strictly from ${filterScope}.
+
+${contextStr ? `Use ONLY the following document excerpts to ground your answer. Do not introduce facts that are not supported by these excerpts. Always cite your sources using [Source N] notation when referencing information from the documents.${contextStr}` : noDocsMessage}
+${stellarContext && !categoryFilter ? `\nLive Stellar network data (from Horizon public API):\n${stellarContext}\nWhen using this data, label it as "Stellar Horizon (live)" so the user knows it is live network data, not from internal documents.\n` : ""}
 Guidelines:
 - Be professional, accurate, and concise
 - Always cite sources when available using [Source N] format
 - If information is not in the provided documents, say so clearly
+- ${categoryFilter ? `A category filter ("${categoryFilter}") is active. Never answer from outside that knowledge base, even if you know the answer.` : "If no filter is active, you may use general banking knowledge as a clearly labelled fallback."}
 - Structure responses with clear headings and bullet points when appropriate
 - Focus on actionable, practical answers for banking operations teams
 - You are informational only - never suggest taking automated actions`;
