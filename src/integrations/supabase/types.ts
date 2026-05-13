@@ -14,10 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      answer_templates: {
+        Row: {
+          category: string
+          created_at: string
+          id: string
+          intent: string
+          pattern: string
+          template: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          id?: string
+          intent: string
+          pattern: string
+          template: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          id?: string
+          intent?: string
+          pattern?: string
+          template?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       audit_logs: {
         Row: {
           category: string | null
           created_at: string | null
+          feedback: string | null
+          feedback_comment: string | null
           id: string
           query: string
           response: string | null
@@ -27,6 +59,8 @@ export type Database = {
         Insert: {
           category?: string | null
           created_at?: string | null
+          feedback?: string | null
+          feedback_comment?: string | null
           id?: string
           query: string
           response?: string | null
@@ -36,6 +70,8 @@ export type Database = {
         Update: {
           category?: string | null
           created_at?: string | null
+          feedback?: string | null
+          feedback_comment?: string | null
           id?: string
           query?: string
           response?: string | null
