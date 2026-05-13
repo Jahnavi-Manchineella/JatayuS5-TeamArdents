@@ -1,8 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { Activity, MessageSquare, FileText, Users, Search } from "lucide-react";
+import { Activity, MessageSquare, FileText, Users, Search, ThumbsUp, ThumbsDown, Clock, DollarSign, Plus, Trash2, ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { toast } from "sonner";
 
 interface AuditLog {
   id: string;
@@ -10,7 +16,22 @@ interface AuditLog {
   category: string | null;
   created_at: string | null;
   user_id: string | null;
+  response?: string | null;
+  retrieved_chunks?: any;
+  feedback?: string | null;
 }
+
+interface AnswerTemplate {
+  id: string;
+  intent: string;
+  pattern: string;
+  template: string;
+  category: string;
+}
+
+// Tunable ROI constants
+const MINUTES_SAVED_PER_DEFLECTION = 8;
+const HOURLY_RATE_USD = 35;
 
 const COLORS = [
   "hsl(175, 65%, 45%)",
@@ -23,12 +44,18 @@ export default function Analytics() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [search, setSearch] = useState("");
   const [docCount, setDocCount] = useState(0);
+  const [ticketUserIds, setTicketUserIds] = useState<Record<string, number>>({});
+  const [profileMap, setProfileMap] = useState<Record<string, string>>({});
+  const [templates, setTemplates] = useState<AnswerTemplate[]>([]);
+  const [tplDialog, setTplDialog] = useState(false);
+  const [tplForm, setTplForm] = useState<Partial<AnswerTemplate>>({ category: "General Operations" });
+  const [expandedAudit, setExpandedAudit] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
       const { data } = await supabase
         .from("audit_logs")
-        .select("id, query, category, created_at, user_id")
+        .select("id, query, category, created_at, user_id, response, retrieved_chunks, feedback")
         .order("created_at", { ascending: false })
         .limit(200);
       setLogs(data || []);
@@ -37,6 +64,31 @@ export default function Analytics() {
         .from("documents")
         .select("id", { count: "exact", head: true });
       setDocCount(count || 0);
+
+      // Tickets per user, for deflection %
+      const { data: ticketRows } = await supabase
+        .from("tickets")
+        .select("user_id");
+      const map: Record<string, number> = {};
+      (ticketRows || []).forEach((t: any) => {
+        if (!t.user_id) return;
+        map[t.user_id] = (map[t.user_id] || 0) + 1;
+      });
+      setTicketUserIds(map);
+
+      // Profile names
+      const { data: profs } = await supabase.from("profiles").select("user_id, full_name");
+      const pm: Record<string, string> = {};
+      (profs || []).forEach((p: any) => {
+        pm[p.user_id] = p.full_name || "";
+      });
+      setProfileMap(pm);
+
+      const { data: tpls } = await supabase
+        .from("answer_templates" as any)
+        .select("id, intent, pattern, template, category")
+        .order("created_at", { ascending: false });
+      setTemplates(((tpls as unknown) as AnswerTemplate[]) || []);
     };
     load();
   }, []);
@@ -72,10 +124,97 @@ export default function Analytics() {
     l.query.toLowerCase().includes(search.toLowerCase())
   );
 
+  // ===== ROI =====
+  const roi = useMemo(() => {
+    const perUser: Record<string, { queries: number; tickets: number }> = {};
+    logs.forEach((l) => {
+      if (!l.user_id) return;
+      if (!perUser[l.user_id]) perUser[l.user_id] = { queries: 0, tickets: 0 };
+      perUser[l.user_id].queries += 1;
+    });
+    Object.entries(ticketUserIds).forEach(([uid, count]) => {
+      if (!perUser[uid]) perUser[uid] = { queries: 0, tickets: 0 };
+      perUser[uid].tickets = count;
+    });
+    const rows = Object.entries(perUser).map(([uid, v]) => {
+      const deflected = Math.max(0, v.queries - v.tickets);
+      const rate = v.queries > 0 ? deflected / v.queries : 0;
+      const hours = (deflected * MINUTES_SAVED_PER_DEFLECTION) / 60;
+      return {
+        uid,
+        name: profileMap[uid] || uid.slice(0, 8) + "…",
+        queries: v.queries,
+        tickets: v.tickets,
+        deflected,
+        rate,
+        hours,
+      };
+    });
+    rows.sort((a, b) => b.queries - a.queries);
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.queries += r.queries;
+        acc.tickets += r.tickets;
+        acc.deflected += r.deflected;
+        acc.hours += r.hours;
+        return acc;
+      },
+      { queries: 0, tickets: 0, deflected: 0, hours: 0 },
+    );
+    const overallRate = totals.queries > 0 ? totals.deflected / totals.queries : 0;
+    return { rows, totals, overallRate, costSaved: totals.hours * HOURLY_RATE_USD };
+  }, [logs, ticketUserIds, profileMap]);
+
+  // ===== Templates CRUD =====
+  const saveTemplate = async () => {
+    if (!tplForm.intent || !tplForm.pattern || !tplForm.template) {
+      toast.error("Intent, pattern and template are required");
+      return;
+    }
+    const payload = {
+      intent: tplForm.intent,
+      pattern: tplForm.pattern,
+      template: tplForm.template,
+      category: tplForm.category || "General Operations",
+    };
+    if (tplForm.id) {
+      const { error } = await (supabase.from("answer_templates" as any) as any)
+        .update(payload)
+        .eq("id", tplForm.id);
+      if (error) return toast.error(error.message);
+      setTemplates((prev) => prev.map((t) => (t.id === tplForm.id ? { ...t, ...payload } : t)));
+    } else {
+      const { data, error } = await (supabase.from("answer_templates" as any) as any)
+        .insert(payload)
+        .select()
+        .single();
+      if (error) return toast.error(error.message);
+      setTemplates((prev) => [data as AnswerTemplate, ...prev]);
+    }
+    setTplDialog(false);
+    setTplForm({ category: "General Operations" });
+    toast.success("Saved");
+  };
+
+  const deleteTemplate = async (id: string) => {
+    const { error } = await (supabase.from("answer_templates" as any) as any).delete().eq("id", id);
+    if (error) return toast.error(error.message);
+    setTemplates((prev) => prev.filter((t) => t.id !== id));
+  };
+
   return (
     <div className="p-6 h-[calc(100vh-64px)] overflow-y-auto">
       <h1 className="text-xl font-bold text-foreground mb-6">Analytics Dashboard</h1>
 
+      <Tabs defaultValue="overview" className="w-full">
+        <TabsList className="mb-4">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="roi">ROI</TabsTrigger>
+          <TabsTrigger value="audit">Audit Explorer</TabsTrigger>
+          <TabsTrigger value="templates">Answer Templates</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview">
       {/* Stats cards */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         {[
@@ -201,6 +340,266 @@ export default function Analytics() {
           </table>
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="roi">
+          <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="glass-panel rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-muted-foreground">Total Deflected</span>
+                <Activity className="w-4 h-4 text-emerald-400" />
+              </div>
+              <p className="text-2xl font-bold text-foreground">{roi.totals.deflected}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">queries answered without a ticket</p>
+            </div>
+            <div className="glass-panel rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-muted-foreground">Deflection Rate</span>
+                <ThumbsUp className="w-4 h-4 text-primary" />
+              </div>
+              <p className="text-2xl font-bold text-foreground">{(roi.overallRate * 100).toFixed(1)}%</p>
+              <p className="text-[11px] text-muted-foreground mt-1">{roi.totals.queries} total queries</p>
+            </div>
+            <div className="glass-panel rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-muted-foreground">Hours Saved</span>
+                <Clock className="w-4 h-4 text-accent" />
+              </div>
+              <p className="text-2xl font-bold text-foreground">{roi.totals.hours.toFixed(1)}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">{MINUTES_SAVED_PER_DEFLECTION} min × deflected</p>
+            </div>
+            <div className="glass-panel rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-muted-foreground">Est. Cost Saved</span>
+                <DollarSign className="w-4 h-4 text-amber-400" />
+              </div>
+              <p className="text-2xl font-bold text-foreground">${roi.costSaved.toFixed(0)}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">at ${HOURLY_RATE_USD}/hr</p>
+            </div>
+          </div>
+
+          <div className="glass-panel rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-border">
+              <h3 className="text-sm font-medium text-foreground">Per-user ROI</h3>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="px-4 py-2 font-medium">User</th>
+                    <th className="px-4 py-2 font-medium text-right">Queries</th>
+                    <th className="px-4 py-2 font-medium text-right">Tickets</th>
+                    <th className="px-4 py-2 font-medium text-right">Deflected</th>
+                    <th className="px-4 py-2 font-medium text-right">Deflection %</th>
+                    <th className="px-4 py-2 font-medium text-right">Hours saved</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roi.rows.slice(0, 50).map((r) => (
+                    <tr key={r.uid} className="border-b border-border/50 hover:bg-secondary/30">
+                      <td className="px-4 py-2 text-foreground truncate max-w-[200px]">{r.name}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{r.queries}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{r.tickets}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-emerald-400">{r.deflected}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{(r.rate * 100).toFixed(0)}%</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{r.hours.toFixed(1)}</td>
+                    </tr>
+                  ))}
+                  {roi.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                        No user data yet
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="audit">
+          <div className="glass-panel rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h3 className="text-sm font-medium text-foreground">Audit Explorer</h3>
+              <div className="relative w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search queries..."
+                  className="pl-10 h-8 text-sm bg-secondary/50 border-border/50"
+                />
+              </div>
+            </div>
+            <div className="max-h-[65vh] overflow-y-auto divide-y divide-border/50">
+              {filteredLogs.map((log) => {
+                const open = expandedAudit === log.id;
+                const chunks = Array.isArray(log.retrieved_chunks) ? log.retrieved_chunks : [];
+                return (
+                  <div key={log.id} className="px-4 py-3">
+                    <button
+                      onClick={() => setExpandedAudit(open ? null : log.id)}
+                      className="w-full flex items-start gap-3 text-left"
+                    >
+                      <ChevronDown
+                        className={`w-4 h-4 mt-0.5 text-muted-foreground transition-transform ${open ? "rotate-180" : "-rotate-90"}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-foreground truncate">{log.query}</p>
+                        <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground">
+                          <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent">
+                            {log.category || "General"}
+                          </span>
+                          <span>{log.created_at && new Date(log.created_at).toLocaleString()}</span>
+                          <span>{chunks.length} chunks</span>
+                          {log.feedback === "up" && <ThumbsUp className="w-3 h-3 text-emerald-400" />}
+                          {log.feedback === "down" && <ThumbsDown className="w-3 h-3 text-red-400" />}
+                        </div>
+                      </div>
+                    </button>
+
+                    {open && (
+                      <div className="mt-3 ml-7 space-y-3">
+                        {log.response && (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Final answer</p>
+                            <div className="text-xs text-foreground/90 whitespace-pre-wrap rounded-md bg-secondary/30 border border-border/60 p-2">
+                              {log.response}
+                            </div>
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Retrieved chunks</p>
+                          <div className="space-y-2">
+                            {chunks.map((c: any, i: number) => (
+                              <div key={i} className="rounded-md border border-border/60 bg-secondary/30 p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-primary/20 text-primary">
+                                    Source {i + 1}
+                                  </span>
+                                  <span className="text-[11px] text-muted-foreground truncate ml-2">
+                                    {c.source}{c.score != null ? ` · ${(c.score * 100).toFixed(1)}%` : ""}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground/90 leading-relaxed">
+                                  {c.section ? <span className="text-foreground/80">{c.section}: </span> : null}
+                                  {c.content}
+                                </p>
+                              </div>
+                            ))}
+                            {chunks.length === 0 && (
+                              <p className="text-[11px] text-muted-foreground italic">No chunks retrieved</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {filteredLogs.length === 0 && (
+                <div className="px-4 py-8 text-center text-muted-foreground text-sm">No audit logs</div>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="templates">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-muted-foreground">
+              Standardized phrasings for top intents — injected into the chat system prompt.
+            </p>
+            <Dialog open={tplDialog} onOpenChange={setTplDialog}>
+              <DialogTrigger asChild>
+                <Button size="sm" onClick={() => setTplForm({ category: "General Operations" })}>
+                  <Plus className="w-4 h-4 mr-1" /> New template
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{tplForm.id ? "Edit template" : "New answer template"}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                  <div>
+                    <Label className="text-xs">Intent (unique identifier)</Label>
+                    <Input
+                      value={tplForm.intent || ""}
+                      onChange={(e) => setTplForm({ ...tplForm, intent: e.target.value })}
+                      placeholder="e.g. kyc_threshold"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Pattern (keywords to match)</Label>
+                    <Input
+                      value={tplForm.pattern || ""}
+                      onChange={(e) => setTplForm({ ...tplForm, pattern: e.target.value })}
+                      placeholder="e.g. kyc threshold, customer due diligence limit"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Category</Label>
+                    <Input
+                      value={tplForm.category || ""}
+                      onChange={(e) => setTplForm({ ...tplForm, category: e.target.value })}
+                      placeholder="Compliance / SOP / Products / General Operations"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Template wording</Label>
+                    <Textarea
+                      rows={5}
+                      value={tplForm.template || ""}
+                      onChange={(e) => setTplForm({ ...tplForm, template: e.target.value })}
+                      placeholder="Standard phrasing the assistant should use…"
+                    />
+                  </div>
+                  <Button onClick={saveTemplate} className="w-full">Save template</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          <div className="glass-panel rounded-xl overflow-hidden">
+            <div className="divide-y divide-border/50">
+              {templates.map((t) => (
+                <div key={t.id} className="px-4 py-3 flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">{t.intent}</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-accent/15 text-accent">
+                        {t.category}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Pattern: {t.pattern}</p>
+                    <p className="text-xs text-foreground/80 mt-1 whitespace-pre-wrap">{t.template}</p>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setTplForm(t);
+                        setTplDialog(true);
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => deleteTemplate(t.id)}>
+                      <Trash2 className="w-4 h-4 text-red-400" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              {templates.length === 0 && (
+                <div className="px-4 py-8 text-center text-muted-foreground text-sm">
+                  No templates yet. Add one to standardize wording for top intents.
+                </div>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
