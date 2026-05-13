@@ -195,6 +195,14 @@ export default function Chat() {
         },
         onDone: async () => {
           setIsStreaming(false);
+          // Persist the final response onto the audit log row so the Audit Explorer can show it.
+          if (msgAuditId && assistantContent) {
+            supabase
+              .from("audit_logs")
+              .update({ response: assistantContent })
+              .eq("id", msgAuditId)
+              .then(() => {});
+          }
           if (isAuthenticated && assistantContent && convId) {
             await saveMessage(convId, {
               role: "assistant",
