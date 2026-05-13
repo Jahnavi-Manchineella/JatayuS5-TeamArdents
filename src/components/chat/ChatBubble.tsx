@@ -1,5 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import { Bot, User, LifeBuoy } from "lucide-react";
+import { WhyThisAnswer } from "@/components/chat/WhyThisAnswer";
+import type { ChunkDetail } from "@/lib/chat-stream";
 
 interface ChatBubbleProps {
   role: "user" | "assistant";
@@ -8,9 +10,11 @@ interface ChatBubbleProps {
   showRaiseTicket?: boolean;
   onRaiseTicket?: () => void;
   isFallback?: boolean;
+  chunks?: ChunkDetail[];
+  auditId?: string;
 }
 
-export function ChatBubble({ role, content, isStreaming, showRaiseTicket, onRaiseTicket, isFallback }: ChatBubbleProps) {
+export function ChatBubble({ role, content, isStreaming, showRaiseTicket, onRaiseTicket, isFallback, chunks, auditId }: ChatBubbleProps) {
   const isUser = role === "user";
 
   return (
@@ -34,6 +38,9 @@ export function ChatBubble({ role, content, isStreaming, showRaiseTicket, onRais
         </div>
         {isStreaming && (
           <span className="inline-block w-2 h-4 bg-primary animate-pulse-glow ml-1" />
+        )}
+        {!isUser && !isStreaming && chunks && chunks.length > 0 && (
+          <WhyThisAnswer answer={content} chunks={chunks} auditId={auditId} />
         )}
         {showRaiseTicket && !isStreaming && (
           <div className={`mt-3 pt-3 border-t border-border/50 flex items-center justify-between gap-2 ${isFallback ? "" : ""}`}>

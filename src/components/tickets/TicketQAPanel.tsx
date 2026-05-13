@@ -30,7 +30,8 @@ export function TicketQAPanel({
   isRequester: boolean;
   onChanged?: () => void;
 }) {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, isSme } = useAuth();
+  const canAdminReview = isAdmin || isSme;
   const [qa, setQa] = useState<QARow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -232,8 +233,8 @@ export function TicketQAPanel({
         </div>
       )}
 
-      {/* Admin review form */}
-      {isAdmin && !myReview && (
+      {/* Admin / SME review form */}
+      {canAdminReview && !myReview && (
         <div className="rounded-lg border border-border p-3 space-y-2">
           <Label className="text-xs">Admin QA review</Label>
           <div className="flex gap-2">

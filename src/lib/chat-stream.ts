@@ -10,6 +10,14 @@ export interface Citation {
   category: string;
 }
 
+export interface ChunkDetail {
+  source: string;
+  section: string;
+  category: string;
+  score: number | null;
+  content: string;
+}
+
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
 
 export async function streamChat({
@@ -19,6 +27,8 @@ export async function streamChat({
   category,
   onDelta,
   onCitations,
+  onChunks,
+  onAuditId,
   onDone,
   onError,
 }: {
@@ -28,6 +38,8 @@ export async function streamChat({
   category?: string;
   onDelta: (text: string) => void;
   onCitations: (citations: Citation[], category: string) => void;
+  onChunks?: (chunks: ChunkDetail[]) => void;
+  onAuditId?: (id: string) => void;
   onDone: () => void;
   onError: (error: string) => void;
 }) {
@@ -58,6 +70,8 @@ export async function streamChat({
     // Parse citations from headers
     const citationsHeader = resp.headers.get("X-Citations");
     const categoryHeader = resp.headers.get("X-Category");
+    const chunksHeader = resp.headers.get("X-Chunks");
+    const auditIdHeader = resp.headers.get("X-Audit-Id");
     if (citationsHeader) {
       try {
         const decoded = decodeURIComponent(escape(atob(citationsHeader)));
@@ -66,6 +80,13 @@ export async function streamChat({
         onCitations(citations, cat);
       } catch {}
     }
+    if (chunksHeader && onChunks) {
+      try {
+        const decoded = decodeURIComponent(escape(atob(chunksHeader)));
+        onChunks(JSON.parse(decoded));
+      } catch {}
+    }
+    if (auditIdHeader && onAuditId) onAuditId(auditIdHeader);
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();

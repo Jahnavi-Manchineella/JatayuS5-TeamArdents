@@ -5,7 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-  "Access-Control-Expose-Headers": "X-Citations, X-Category",
+  "Access-Control-Expose-Headers": "X-Citations, X-Category, X-Chunks, X-Audit-Id",
 };
 
 // === Stellar Horizon (public API, no key required) =================
@@ -237,9 +237,10 @@ serve(async (req) => {
       }
     }
 
-    // Build context and citations
+    // Build context, citations, and chunk-explainability payload
     let contextStr = "";
     const citations: any[] = [];
+    const chunkDetails: any[] = [];
     if (relevantChunks.length > 0) {
       contextStr = "\n\nRelevant document excerpts:\n";
       relevantChunks.forEach((chunk: any, i: number) => {
@@ -247,6 +248,12 @@ serve(async (req) => {
         const docCat = chunk.doc_category || "General Operations";
         const section = chunk.chunk_section_title || "General";
         const content = chunk.chunk_content || chunk.content || "";
+        const score =
+          typeof chunk.similarity === "number"
+            ? chunk.similarity
+            : typeof chunk.rank === "number"
+              ? chunk.rank
+              : null;
         contextStr += `\n[Source ${i + 1}: ${docName}, Section: ${section}]\n${content}\n`;
         citations.push({
           source: docName,
@@ -254,7 +261,34 @@ serve(async (req) => {
           content: content.substring(0, 200),
           category: docCat,
         });
+        chunkDetails.push({
+          source: docName,
+          section,
+          category: docCat,
+          score,
+          content: content.substring(0, 600),
+        });
       });
+    }
+
+    // Load top answer templates for the active category and inject into prompt
+    let templatesBlock = "";
+    try {
+      let tplQuery = supabase.from("answer_templates").select("intent, pattern, template, category").limit(8);
+      if (categoryFilter) tplQuery = tplQuery.eq("category", categoryFilter);
+      const { data: tpls } = await tplQuery;
+      if (tpls && tpls.length > 0) {
+        templatesBlock =
+          "\nStandardized answer templates — when the user's query matches one of these intents, follow the template wording closely:\n" +
+          tpls
+            .map(
+              (t: any) =>
+                `• Intent: ${t.intent} (matches: ${t.pattern})\n  Template: ${t.template}`
+            )
+            .join("\n");
+      }
+    } catch (e) {
+      console.error("answer_templates load error:", e);
     }
 
     // Categorize query
@@ -282,7 +316,8 @@ Guidelines:
 - ${categoryFilter ? `A category filter ("${categoryFilter}") is active. Never answer from outside that knowledge base, even if you know the answer.` : "If no filter is active, you may use general banking knowledge as a clearly labelled fallback."}
 - Structure responses with clear headings and bullet points when appropriate
 - Focus on actionable, practical answers for banking operations teams
-- You are informational only - never suggest taking automated actions`;
+- You are informational only - never suggest taking automated actions
+${templatesBlock}`;
 
     const aiResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
@@ -320,14 +355,20 @@ Guidelines:
     }
 
     // Log audit entry — always store, even for guest (user_id null) chats.
+    let auditId: string | null = null;
     try {
-      const { error: auditErr } = await supabase.from("audit_logs").insert({
-        user_id: userId,
-        query: lastUserMessage,
-        retrieved_chunks: citations,
-        category,
-      });
+      const { data: auditRow, error: auditErr } = await supabase
+        .from("audit_logs")
+        .insert({
+          user_id: userId,
+          query: lastUserMessage,
+          retrieved_chunks: chunkDetails,
+          category,
+        })
+        .select("id")
+        .single();
       if (auditErr) console.error("audit_logs insert error:", auditErr);
+      auditId = auditRow?.id ?? null;
     } catch (e) {
       console.error("audit_logs insert exception:", e);
     }
@@ -337,8 +378,11 @@ Guidelines:
     headers.set("Content-Type", "text/event-stream");
     // Base64-encode to ensure ByteString-safe header values (citations may contain non-ASCII)
     const citationsB64 = btoa(unescape(encodeURIComponent(JSON.stringify(citations))));
+    const chunksB64 = btoa(unescape(encodeURIComponent(JSON.stringify(chunkDetails))));
     headers.set("X-Citations", citationsB64);
+    headers.set("X-Chunks", chunksB64);
     headers.set("X-Category", encodeURIComponent(category));
+    if (auditId) headers.set("X-Audit-Id", auditId);
 
     return new Response(aiResponse.body, { headers });
   } catch (e: any) {
