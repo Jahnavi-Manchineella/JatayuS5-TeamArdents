@@ -1,13 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { Activity, MessageSquare, FileText, Users, Search, ThumbsUp, ThumbsDown, Clock, DollarSign, Plus, Trash2, ChevronDown } from "lucide-react";
+import { Activity, MessageSquare, FileText, Users, Search, ThumbsUp, ThumbsDown, Clock, DollarSign, ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
 interface AuditLog {
@@ -19,14 +15,6 @@ interface AuditLog {
   response?: string | null;
   retrieved_chunks?: any;
   feedback?: string | null;
-}
-
-interface AnswerTemplate {
-  id: string;
-  intent: string;
-  pattern: string;
-  template: string;
-  category: string;
 }
 
 // Tunable ROI constants
@@ -46,9 +34,6 @@ export default function Analytics() {
   const [docCount, setDocCount] = useState(0);
   const [ticketUserIds, setTicketUserIds] = useState<Record<string, number>>({});
   const [profileMap, setProfileMap] = useState<Record<string, string>>({});
-  const [templates, setTemplates] = useState<AnswerTemplate[]>([]);
-  const [tplDialog, setTplDialog] = useState(false);
-  const [tplForm, setTplForm] = useState<Partial<AnswerTemplate>>({ category: "General Operations" });
   const [expandedAudit, setExpandedAudit] = useState<string | null>(null);
 
   useEffect(() => {
@@ -83,12 +68,6 @@ export default function Analytics() {
         pm[p.user_id] = p.full_name || "";
       });
       setProfileMap(pm);
-
-      const { data: tpls } = await supabase
-        .from("answer_templates" as any)
-        .select("id, intent, pattern, template, category")
-        .order("created_at", { ascending: false });
-      setTemplates(((tpls as unknown) as AnswerTemplate[]) || []);
     };
     load();
   }, []);
@@ -165,43 +144,6 @@ export default function Analytics() {
     return { rows, totals, overallRate, costSaved: totals.hours * HOURLY_RATE_USD };
   }, [logs, ticketUserIds, profileMap]);
 
-  // ===== Templates CRUD =====
-  const saveTemplate = async () => {
-    if (!tplForm.intent || !tplForm.pattern || !tplForm.template) {
-      toast.error("Intent, pattern and template are required");
-      return;
-    }
-    const payload = {
-      intent: tplForm.intent,
-      pattern: tplForm.pattern,
-      template: tplForm.template,
-      category: tplForm.category || "General Operations",
-    };
-    if (tplForm.id) {
-      const { error } = await (supabase.from("answer_templates" as any) as any)
-        .update(payload)
-        .eq("id", tplForm.id);
-      if (error) return toast.error(error.message);
-      setTemplates((prev) => prev.map((t) => (t.id === tplForm.id ? { ...t, ...payload } : t)));
-    } else {
-      const { data, error } = await (supabase.from("answer_templates" as any) as any)
-        .insert(payload)
-        .select()
-        .single();
-      if (error) return toast.error(error.message);
-      setTemplates((prev) => [data as AnswerTemplate, ...prev]);
-    }
-    setTplDialog(false);
-    setTplForm({ category: "General Operations" });
-    toast.success("Saved");
-  };
-
-  const deleteTemplate = async (id: string) => {
-    const { error } = await (supabase.from("answer_templates" as any) as any).delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    setTemplates((prev) => prev.filter((t) => t.id !== id));
-  };
-
   return (
     <div className="p-6 h-[calc(100vh-64px)] overflow-y-auto">
       <h1 className="text-xl font-bold text-foreground mb-6">Analytics Dashboard</h1>
@@ -211,7 +153,6 @@ export default function Analytics() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="roi">ROI</TabsTrigger>
           <TabsTrigger value="audit">Audit Explorer</TabsTrigger>
-          <TabsTrigger value="templates">Answer Templates</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
