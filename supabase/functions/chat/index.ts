@@ -271,26 +271,6 @@ serve(async (req) => {
       });
     }
 
-    // Load top answer templates for the active category and inject into prompt
-    let templatesBlock = "";
-    try {
-      let tplQuery = supabase.from("answer_templates").select("intent, pattern, template, category").limit(8);
-      if (categoryFilter) tplQuery = tplQuery.eq("category", categoryFilter);
-      const { data: tpls } = await tplQuery;
-      if (tpls && tpls.length > 0) {
-        templatesBlock =
-          "\nStandardized answer templates — when the user's query matches one of these intents, follow the template wording closely:\n" +
-          tpls
-            .map(
-              (t: any) =>
-                `• Intent: ${t.intent} (matches: ${t.pattern})\n  Template: ${t.template}`
-            )
-            .join("\n");
-      }
-    } catch (e) {
-      console.error("answer_templates load error:", e);
-    }
-
     // Categorize query
     let category = userCategory && userCategory !== "All" ? userCategory : "General Operations";
     if (category === "General Operations") {
@@ -317,7 +297,7 @@ Guidelines:
 - Structure responses with clear headings and bullet points when appropriate
 - Focus on actionable, practical answers for banking operations teams
 - You are informational only - never suggest taking automated actions
-${templatesBlock}`;
+`;
 
     const aiResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
