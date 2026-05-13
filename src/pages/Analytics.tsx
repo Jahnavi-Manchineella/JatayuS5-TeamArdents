@@ -1,15 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { Activity, MessageSquare, FileText, Users, Search, ThumbsUp, ThumbsDown, Clock, DollarSign, Plus, Trash2, ChevronDown } from "lucide-react";
+import { Activity, MessageSquare, FileText, Users, Search, ThumbsUp, ThumbsDown, Clock, DollarSign, ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { toast } from "sonner";
-
 interface AuditLog {
   id: string;
   query: string;
@@ -19,14 +13,6 @@ interface AuditLog {
   response?: string | null;
   retrieved_chunks?: any;
   feedback?: string | null;
-}
-
-interface AnswerTemplate {
-  id: string;
-  intent: string;
-  pattern: string;
-  template: string;
-  category: string;
 }
 
 // Tunable ROI constants
@@ -46,9 +32,6 @@ export default function Analytics() {
   const [docCount, setDocCount] = useState(0);
   const [ticketUserIds, setTicketUserIds] = useState<Record<string, number>>({});
   const [profileMap, setProfileMap] = useState<Record<string, string>>({});
-  const [templates, setTemplates] = useState<AnswerTemplate[]>([]);
-  const [tplDialog, setTplDialog] = useState(false);
-  const [tplForm, setTplForm] = useState<Partial<AnswerTemplate>>({ category: "General Operations" });
   const [expandedAudit, setExpandedAudit] = useState<string | null>(null);
 
   useEffect(() => {
@@ -83,12 +66,6 @@ export default function Analytics() {
         pm[p.user_id] = p.full_name || "";
       });
       setProfileMap(pm);
-
-      const { data: tpls } = await supabase
-        .from("answer_templates" as any)
-        .select("id, intent, pattern, template, category")
-        .order("created_at", { ascending: false });
-      setTemplates(((tpls as unknown) as AnswerTemplate[]) || []);
     };
     load();
   }, []);
@@ -165,43 +142,6 @@ export default function Analytics() {
     return { rows, totals, overallRate, costSaved: totals.hours * HOURLY_RATE_USD };
   }, [logs, ticketUserIds, profileMap]);
 
-  // ===== Templates CRUD =====
-  const saveTemplate = async () => {
-    if (!tplForm.intent || !tplForm.pattern || !tplForm.template) {
-      toast.error("Intent, pattern and template are required");
-      return;
-    }
-    const payload = {
-      intent: tplForm.intent,
-      pattern: tplForm.pattern,
-      template: tplForm.template,
-      category: tplForm.category || "General Operations",
-    };
-    if (tplForm.id) {
-      const { error } = await (supabase.from("answer_templates" as any) as any)
-        .update(payload)
-        .eq("id", tplForm.id);
-      if (error) return toast.error(error.message);
-      setTemplates((prev) => prev.map((t) => (t.id === tplForm.id ? { ...t, ...payload } : t)));
-    } else {
-      const { data, error } = await (supabase.from("answer_templates" as any) as any)
-        .insert(payload)
-        .select()
-        .single();
-      if (error) return toast.error(error.message);
-      setTemplates((prev) => [data as AnswerTemplate, ...prev]);
-    }
-    setTplDialog(false);
-    setTplForm({ category: "General Operations" });
-    toast.success("Saved");
-  };
-
-  const deleteTemplate = async (id: string) => {
-    const { error } = await (supabase.from("answer_templates" as any) as any).delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    setTemplates((prev) => prev.filter((t) => t.id !== id));
-  };
-
   return (
     <div className="p-6 h-[calc(100vh-64px)] overflow-y-auto">
       <h1 className="text-xl font-bold text-foreground mb-6">Analytics Dashboard</h1>
@@ -211,7 +151,6 @@ export default function Analytics() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="roi">ROI</TabsTrigger>
           <TabsTrigger value="audit">Audit Explorer</TabsTrigger>
-          <TabsTrigger value="templates">Answer Templates</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -505,100 +444,6 @@ export default function Analytics() {
           </div>
         </TabsContent>
 
-        <TabsContent value="templates">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-muted-foreground">
-              Standardized phrasings for top intents — injected into the chat system prompt.
-            </p>
-            <Dialog open={tplDialog} onOpenChange={setTplDialog}>
-              <DialogTrigger asChild>
-                <Button size="sm" onClick={() => setTplForm({ category: "General Operations" })}>
-                  <Plus className="w-4 h-4 mr-1" /> New template
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{tplForm.id ? "Edit template" : "New answer template"}</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-xs">Intent (unique identifier)</Label>
-                    <Input
-                      value={tplForm.intent || ""}
-                      onChange={(e) => setTplForm({ ...tplForm, intent: e.target.value })}
-                      placeholder="e.g. kyc_threshold"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Pattern (keywords to match)</Label>
-                    <Input
-                      value={tplForm.pattern || ""}
-                      onChange={(e) => setTplForm({ ...tplForm, pattern: e.target.value })}
-                      placeholder="e.g. kyc threshold, customer due diligence limit"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Category</Label>
-                    <Input
-                      value={tplForm.category || ""}
-                      onChange={(e) => setTplForm({ ...tplForm, category: e.target.value })}
-                      placeholder="Compliance / SOP / Products / General Operations"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Template wording</Label>
-                    <Textarea
-                      rows={5}
-                      value={tplForm.template || ""}
-                      onChange={(e) => setTplForm({ ...tplForm, template: e.target.value })}
-                      placeholder="Standard phrasing the assistant should use…"
-                    />
-                  </div>
-                  <Button onClick={saveTemplate} className="w-full">Save template</Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          <div className="glass-panel rounded-xl overflow-hidden">
-            <div className="divide-y divide-border/50">
-              {templates.map((t) => (
-                <div key={t.id} className="px-4 py-3 flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-foreground">{t.intent}</span>
-                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-accent/15 text-accent">
-                        {t.category}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">Pattern: {t.pattern}</p>
-                    <p className="text-xs text-foreground/80 mt-1 whitespace-pre-wrap">{t.template}</p>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setTplForm(t);
-                        setTplDialog(true);
-                      }}
-                    >
-                      Edit
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => deleteTemplate(t.id)}>
-                      <Trash2 className="w-4 h-4 text-red-400" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-              {templates.length === 0 && (
-                <div className="px-4 py-8 text-center text-muted-foreground text-sm">
-                  No templates yet. Add one to standardize wording for top intents.
-                </div>
-              )}
-            </div>
-          </div>
-        </TabsContent>
       </Tabs>
     </div>
   );
