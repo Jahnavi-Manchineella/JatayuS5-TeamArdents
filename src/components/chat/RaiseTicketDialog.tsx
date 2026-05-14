@@ -64,8 +64,28 @@ export function RaiseTicketDialog({
       return;
     }
     if (!user) {
-      if (!guestEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim())) {
+      const email = guestEmail.trim().toLowerCase();
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         toast.error("Please enter a valid email so we can follow up");
+        return;
+      }
+      // Catch common domain typos that silently bounce (e.g. gamil.com)
+      const domain = email.split("@")[1] || "";
+      const typos: Record<string, string> = {
+        "gamil.com": "gmail.com",
+        "gmial.com": "gmail.com",
+        "gnail.com": "gmail.com",
+        "gmai.com": "gmail.com",
+        "gmal.com": "gmail.com",
+        "gmail.co": "gmail.com",
+        "gmail.con": "gmail.com",
+        "yahooo.com": "yahoo.com",
+        "yaho.com": "yahoo.com",
+        "hotnail.com": "hotmail.com",
+        "outlok.com": "outlook.com",
+      };
+      if (typos[domain]) {
+        toast.error(`Did you mean @${typos[domain]}? Please fix your email.`);
         return;
       }
     }
