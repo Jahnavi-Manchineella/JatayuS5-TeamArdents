@@ -69,25 +69,37 @@ serve(async (req) => {
       });
     }
 
-    // Determine recipients + render template
+    // Always notify: requester + assignee + all admins (and SMEs) for every event.
     const recipients = new Set<string>();
     let template: { subject: string; html: string };
     let purpose = "ticket_updated";
+    let qa: any = null;
 
+    // 1) Requester
+    if (ticket.user_email) recipients.add(ticket.user_email);
+
+    // 2) Assignee
+    if (ticket.assigned_to_email) recipients.add(ticket.assigned_to_email);
+    if (ticket.assigned_to) {
+      const { data } = await supabase.auth.admin.getUserById(ticket.assigned_to);
+      if (data?.user?.email) recipients.add(data.user.email);
+    }
+
+    // 3) Admins + SMEs
+    const { data: roles } = await supabase
+      .from("user_roles")
+      .select("user_id")
+      .in("role", ["admin", "sme"]);
+    for (const r of roles || []) {
+      const { data } = await supabase.auth.admin.getUserById((r as any).user_id);
+      if (data?.user?.email) recipients.add(data.user.email);
+    }
+
+    // Pick template per event
     if (body.event === "created") {
-      const { data: roles } = await supabase
-        .from("user_roles")
-        .select("user_id")
-        .in("role", ["admin", "sme"]);
-      const ids = (roles || []).map((r: any) => r.user_id);
-      for (const id of ids) {
-        const { data } = await supabase.auth.admin.getUserById(id);
-        if (data?.user?.email) recipients.add(data.user.email);
-      }
       template = ticketCreatedEmail(ticket);
       purpose = "ticket_created";
-
-      // Also send a confirmation (no CTA link) to the requester
+      // Also send the requester-flavoured confirmation (no staff CTA)
       if (ticket.user_email) {
         const requesterTpl = ticketCreatedRequesterEmail(ticket);
         await sendViaGmail(
@@ -98,33 +110,24 @@ serve(async (req) => {
           "ticket_created_requester"
         );
       }
-    } else if (body.event === "assigned" && ticket.assigned_to) {
-      const { data } = await supabase.auth.admin.getUserById(ticket.assigned_to);
-      if (data?.user?.email) recipients.add(data.user.email);
+    } else if (body.event === "assigned") {
       template = ticketAssignedEmail(ticket);
       purpose = "ticket_assigned";
-    } else if (body.event === "resolved" && ticket.user_email) {
-      recipients.add(ticket.user_email);
+    } else if (body.event === "resolved") {
       template = ticketResolvedEmail(ticket);
       purpose = "ticket_resolved";
     } else if (body.event === "qa_submitted" && body.qa_id) {
-      const { data: qa } = await supabase
+      const { data: qaRow } = await supabase
         .from("ticket_qa")
         .select("*")
         .eq("id", body.qa_id)
         .single();
-      if (!qa) {
+      if (!qaRow) {
         return new Response(JSON.stringify({ error: "QA not found" }), {
           status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      // Requester rating → notify the assignee/admin team
-      // Admin review → notify the requester
-      if (qa.qa_type === "admin_review" && ticket.user_email) {
-        recipients.add(ticket.user_email);
-      } else if (qa.qa_type === "requester_rating" && ticket.assigned_to_email) {
-        recipients.add(ticket.assigned_to_email);
-      }
+      qa = qaRow;
       template = qaSubmittedEmail(ticket, qa);
       purpose = "qa_submitted";
     } else {
