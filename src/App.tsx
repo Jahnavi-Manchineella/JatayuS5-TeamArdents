@@ -11,7 +11,7 @@ import Chat from "./pages/Chat";
 import Documents from "./pages/Documents";
 import Analytics from "./pages/Analytics";
 import NotFound from "./pages/NotFound";
-import Presentation from "./pages/Presentation";
+
 import Tickets from "./pages/Tickets";
 import Members from "./pages/Members";
 import SetPassword from "./pages/SetPassword";
@@ -68,7 +68,7 @@ const App = () => (
             <Route path="/members" element={<AdminRoute><Members /></AdminRoute>} />
             <Route path="/documents" element={<AdminRoute><Documents /></AdminRoute>} />
             <Route path="/analytics" element={<AdminRoute><Analytics /></AdminRoute>} />
-            <Route path="/presentation" element={<Presentation />} />
+            
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
